@@ -6,12 +6,16 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 import scipy as sp
+from anndata.acc import AdRef, MetaAcc
+from geopandas import GeoDataFrame
+from shapely import GeometryType, Point
+from shapely.io import from_ragged_array
 from sklearn.neighbors import radius_neighbors_graph
 from tqdm import tqdm
 
 if TYPE_CHECKING:
     from anndata import AnnData
-    from anndata.acc import AdRef, MultiAcc
+    from anndata.acc import MultiAcc
 
 
 def _gen_bins(x: np.ndarray, pixel_size: float) -> np.ndarray:
@@ -94,6 +98,36 @@ def filter_lesions_by_size(points: np.ndarray, max_distance: float = 20, min_cel
     connected_components = sp.sparse.csgraph.connected_components(neighbor_graph)[1]
     lesion_size = np.bincount(connected_components)[connected_components]
     return points[lesion_size >= min_cells_per_lesion, :].copy()
+
+
+def circles_to_polygons(gdf: GeoDataFrame) -> GeoDataFrame:
+    buffered_df = gdf.copy()
+    # quad_segs is the default from spatialdata
+    buffered_df["geometry"] = buffered_df.apply(lambda row: row.geometry.buffer(row["radius"], quad_segs=16), axis=1)
+
+    # Ensure the GeoDataFrame recognizes the updated geometry column
+    buffered_df = buffered_df.set_geometry("geometry")
+
+    return buffered_df
+
+
+def get_circles(centers_x, centers_y, outer_radius):
+    data = np.array([[x, y] for x, y in zip(centers_x, centers_y, strict=True)])
+    geometry_type = GeometryType(0)
+    geometries = from_ragged_array(geometry_type=geometry_type, coords=data)
+    dilated_circles_outer = GeoDataFrame({"geometry": geometries, "radius": outer_radius})
+    circles = circles_to_polygons(dilated_circles_outer)
+    return circles
+
+
+def count_points_within_circles(centers_x, centers_y, circles):
+    shapely_points = [Point(x, y) for x, y in zip(centers_x, centers_y, strict=True)]
+    shapely_points = GeoDataFrame(geometry=shapely_points)
+    joined = circles.sjoin(shapely_points)
+    point_count = joined.index.value_counts()
+    result = np.array([0] * circles.shape[0])
+    result[point_count.index.to_numpy()] = point_count.to_numpy()
+    return result
 
 
 @dataclass(frozen=True)
@@ -350,3 +384,14 @@ class SeqLumen:
         del empty_region_coords
         # Step 3. Rescue empty points that are also in lumen, but were not captured because cysts were not completely filled
         return self._rescue_points(lumen, remaining_empty, border_centroids)
+
+    def count_lumen(self, adata: AnnData, lumen: np.ndarray, *, centroids_acc: MultiAcc, lumen_count_acc: AdRef):
+        centroids = adata[centroids_acc]
+        # TODO: expose radius? 60 was used for the figure
+        circles = get_circles(centroids[:, 0], centroids[:, 1], 60)
+        lumen_count = count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
+        match lumen_count_acc:
+            case AdRef(acc=MetaAcc(dim=dim), idx=str(col)):
+                getattr(adata, dim)[col] = lumen_count
+            case _:
+                raise TypeError(f"`lumen_count_acc` must be an accessor not {type(lumen_count_acc)}")
