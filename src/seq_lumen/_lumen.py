@@ -7,8 +7,8 @@ import cv2
 import numpy as np
 import scipy as sp
 from anndata.acc import AdRef, MetaAcc
-from geopandas import GeoDataFrame
-from shapely import GeometryType, Point
+from geopandas import GeoDataFrame, points_from_xy
+from shapely import GeometryType
 from shapely.io import from_ragged_array
 from sklearn.neighbors import radius_neighbors_graph
 from tqdm import tqdm
@@ -101,6 +101,20 @@ def filter_lesions_by_size(points: np.ndarray, max_distance: float = 20, min_cel
 
 
 def circles_to_polygons(gdf: GeoDataFrame) -> GeoDataFrame:
+    """Buffer each point in `gdf` by its `radius` column into a polygon (port of spatialdata's `circles_to_polygons`).
+
+    Each circle becomes a 64-gon (`quad_segs=16` per quarter) inscribed in the true circle,
+    so it undershoots the radius by at most `radius * (1 - cos(pi / 64))` ≈ 0.07 µm at 60 µm.
+
+    Parameters
+    ----------
+    gdf
+        Point geometries with a `radius` column (µm).
+
+    Returns
+    -------
+    A copy of `gdf` with polygon geometries.
+    """
     buffered_df = gdf.copy()
     # quad_segs is the default from spatialdata
     buffered_df["geometry"] = buffered_df.apply(lambda row: row.geometry.buffer(row["radius"], quad_segs=16), axis=1)
@@ -111,8 +125,21 @@ def circles_to_polygons(gdf: GeoDataFrame) -> GeoDataFrame:
     return buffered_df
 
 
-def get_circles(centers_x, centers_y, outer_radius):
-    data = np.array([[x, y] for x, y in zip(centers_x, centers_y, strict=True)])
+def get_circles(centers_x: np.ndarray, centers_y: np.ndarray, outer_radius: float) -> GeoDataFrame:
+    """Circles of radius `outer_radius` around each center, as polygons.
+
+    Parameters
+    ----------
+    centers_x, centers_y
+        `(n,)` center coordinates (µm).
+    outer_radius
+        Circle radius (µm).
+
+    Returns
+    -------
+    `n` polygons, indexed `0..n-1` in the order of the centers.
+    """
+    data = np.column_stack((centers_x, centers_y))
     geometry_type = GeometryType(0)
     geometries = from_ragged_array(geometry_type=geometry_type, coords=data)
     dilated_circles_outer = GeoDataFrame({"geometry": geometries, "radius": outer_radius})
@@ -120,9 +147,21 @@ def get_circles(centers_x, centers_y, outer_radius):
     return circles
 
 
-def count_points_within_circles(centers_x, centers_y, circles):
-    shapely_points = [Point(x, y) for x, y in zip(centers_x, centers_y, strict=True)]
-    shapely_points = GeoDataFrame(geometry=shapely_points)
+def count_points_within_circles(centers_x: np.ndarray, centers_y: np.ndarray, circles: GeoDataFrame) -> np.ndarray:
+    """Number of points inside (or on the boundary of) each circle.
+
+    Parameters
+    ----------
+    centers_x, centers_y
+        `(m,)` coordinates of the points to count (despite the name, these are not the circle centers).
+    circles
+        `n` polygons indexed `0..n-1`, as returned by :func:`get_circles`.
+
+    Returns
+    -------
+    `(n,)` integer counts, aligned with `circles`.
+    """
+    shapely_points = GeoDataFrame(geometry=points_from_xy(centers_x, centers_y))
     joined = circles.sjoin(shapely_points)
     point_count = joined.index.value_counts()
     result = np.array([0] * circles.shape[0])
@@ -227,6 +266,12 @@ class SeqLumen:
     """Distance (µm) below which two border cells belong to the same lesion. Paper: 20 µm.
 
     Used in step 3.
+    """
+
+    lumen_radius: float = 60
+    """Radius (µm) of the circle around each cell in which lumen points are counted. Paper: 60 µm (Figure 2H).
+
+    Used in :meth:`count_lumen`.
     """
 
     def _empty_regions(self, xy: np.ndarray) -> np.ndarray:
@@ -385,13 +430,32 @@ class SeqLumen:
         # Step 3. Rescue empty points that are also in lumen, but were not captured because cysts were not completely filled
         return self._rescue_points(lumen, remaining_empty, border_centroids)
 
-    def count_lumen(self, adata: AnnData, lumen: np.ndarray, *, centroids_acc: MultiAcc, lumen_count_acc: AdRef):
+    def count_lumen(
+        self, adata: AnnData, lumen: np.ndarray, *, centroids_acc: MultiAcc, lumen_count_acc: AdRef
+    ) -> None:
+        """Count lumen points within :attr:`lumen_radius` of each cell, i.e. the paper's "lumen area".
+
+        The count is in density-grid pixels; multiply by `interpoint_distance**2` for µm².
+        Rescued and enclosed lumen points both count.
+
+        Parameters
+        ----------
+        adata
+            The tissue section `lumen` was computed from.
+        lumen
+            `(n, 2+)` lumen points, as returned by :meth:`lumen_coords` (only x, y are used).
+        centroids_acc
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
+        lumen_count_acc
+            `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
+        """
         centroids = adata[centroids_acc]
-        # TODO: expose radius? 60 was used for the figure
-        circles = get_circles(centroids[:, 0], centroids[:, 1], 60)
+        circles = get_circles(centroids[:, 0], centroids[:, 1], self.lumen_radius)
         lumen_count = count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
         match lumen_count_acc:
-            case AdRef(acc=MetaAcc(dim=dim), idx=str(col)):
-                getattr(adata, dim)[col] = lumen_count
+            case AdRef(acc=MetaAcc(dim="obs"), idx=str(col)):
+                adata.obs[col] = lumen_count
             case _:
-                raise TypeError(f"`lumen_count_acc` must be an accessor not {type(lumen_count_acc)}")
+                raise TypeError(
+                    f"`lumen_count_acc` must be an `obs` column accessor like `A.obs['col']`, not {lumen_count_acc!r}"
+                )
