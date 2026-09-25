@@ -24,7 +24,18 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = [ "anndata>=0.13", "numpy", "opencv-python", "pandas", "scikit-learn", "scipy", "session-info2", "tqdm" ]
+dependencies = [
+  "anndata>=0.13",
+  "geopandas",
+  "numpy",
+  "opencv-python",
+  "pandas",
+  "scikit-learn",
+  "scipy",
+  "session-info2",
+  "shapely",
+  "tqdm",
+]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://seq_lumen.readthedocs.io/"
 urls.Homepage = "https://github.com/ilan-gold/seq_lumen"
