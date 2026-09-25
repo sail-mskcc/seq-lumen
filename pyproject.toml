@@ -3,9 +3,11 @@ build-backend = "hatchling.build"
 requires = [ "hatchling" ]
 
 [project]
-name = "seq_lumen"
+name = "seq-lumen"
 version = "0.0.1"
-description = "A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method."
+description = """\
+  A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.\
+  """
 readme = "README.md"
 license = { file = "LICENSE" }
 maintainers = [
@@ -22,11 +24,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = [
-  "anndata>=0.13",
-  # for debug logging (referenced from the issue template)
-  "session-info2",
-]
+dependencies = [ "anndata>=0.13", "numpy", "opencv-python", "pandas", "scikit-learn", "scipy", "session-info2", "tqdm" ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://seq_lumen.readthedocs.io/"
 urls.Homepage = "https://github.com/ilan-gold/seq_lumen"
@@ -61,34 +59,6 @@ typecheck = [
   "pandas-stubs",
 ]
 
-[tool.hatch]
-envs.default.installer = "uv"
-envs.default.dependency-groups = [ "dev" ]
-envs.docs.scripts.build = "sphinx-build -M html docs docs/_build -W {args}"
-envs.docs.scripts.clean = "git clean -fdX -- {args:docs}"
-envs.docs.scripts.open = "python -m webbrowser -t docs/_build/html/index.html"
-envs.docs.dependency-groups = [ "doc" ]
-envs.hatch-check-code.dependencies = [ "prek" ]
-envs.hatch-check-code.scripts.lint-check = "echo 'try `hatch check code --fix`'; false"
-envs.hatch-check-code.scripts.lint-fix = "prek run -a --no-group=format --no-group=typecheck"
-envs.hatch-check-fmt.dependencies = [ "prek" ]
-envs.hatch-check-fmt.scripts.format-check = "echo 'try `hatch check fmt --fix`'; false"
-envs.hatch-check-fmt.scripts.format-fix = "prek run -a --group=format --no-group=typecheck"
-envs.hatch-check-types.scripts.check = [ "mypy" ]
-envs.hatch-check-types.dependency-groups = [ "typecheck", "test" ]
-envs.hatch-test.matrix = [
-  # Test the lowest and highest supported Python versions with normal deps
-  { deps = [ "stable" ], python = [ "3.12", "3.14" ] },
-  # Test the newest supported Python version also with pre-release deps
-  { deps = [ "pre" ], python = [ "3.14" ] },
-]
-# If the matrix variable `deps` is set to "pre",
-# set the environment variable `UV_PRERELEASE` to "allow".
-envs.hatch-test.overrides.matrix.deps.env-vars = [
-  { value = "allow", key = "UV_PRERELEASE", if = [ "pre" ] },
-]
-envs.hatch-test.dependency-groups = [ "dev", "test" ]
-
 [tool.ruff]
 line-length = 120
 src = [ "src" ]
@@ -103,9 +73,10 @@ lint.select = [
   "F",      # Errors detected by Pyflakes
   "I",      # isort
   "RUF100", # Report unused noqa directives
+  "TC",
   "TID",    # flake8-tidy-imports
   "UP",     # pyupgrade
-  "W",      # Warning detected by Pycodestyle
+  "W"      # Warning detected by Pycodestyle
 ]
 lint.ignore = [
   "B008", # Errors from function calls in argument defaults. These are fine when the result is immutable.

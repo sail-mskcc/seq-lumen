@@ -1,0 +1,38 @@
+
+[envs.default]
+installer = "uv"
+dependency-groups = [ "dev" ]
+
+[envs.docs]
+scripts.build = "sphinx-build -M html docs docs/_build -W {args}"
+scripts.clean = "git clean -fdX -- {args:docs}"
+scripts.open = "python -m webbrowser -t docs/_build/html/index.html"
+dependency-groups = [ "doc" ]
+
+[envs.hatch-check-code]
+dependencies = [ "prek" ]
+scripts.lint-check = "echo 'try `hatch check code --fix`'; false"
+scripts.lint-fix = "prek run -a --no-group=format --no-group=typecheck"
+
+[envs.hatch-check-fmt]
+dependencies = [ "prek" ]
+format-check = "echo 'try `hatch check fmt --fix`'; false"
+format-fix = "prek run -a --group=format --no-group=typecheck"
+
+[envs.hatch-check-types]
+scripts.check = [ "mypy" ]
+dependency-groups = [ "typecheck", "test" ]
+
+[envs.hatch-test]
+matrix = [
+  # Test the lowest and highest supported Python versions with normal deps
+  { deps = [ "stable" ], python = [ "3.12", "3.14" ] },
+  # Test the newest supported Python version also with pre-release deps
+  { deps = [ "pre" ], python = [ "3.14" ] },
+]
+# If the matrix variable `deps` is set to "pre",
+# set the environment variable `UV_PRERELEASE` to "allow".
+overrides.matrix.deps.env-vars = [
+  { value = "allow", key = "UV_PRERELEASE", if = [ "pre" ] },
+]
+dependency-groups = [ "dev", "test" ]
