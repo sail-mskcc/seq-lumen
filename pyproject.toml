@@ -69,6 +69,8 @@ typecheck = [
   "mypy",
   "pandas-stubs",
   "scipy-stubs",
+  "types-geopandas",
+  "types-shapely",
   "types-tqdm",
 ]
 
