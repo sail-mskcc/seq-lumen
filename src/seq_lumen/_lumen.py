@@ -156,7 +156,7 @@ class SeqLumen:
     rescue_max_distance: float = 15
     """Step 3. Empty points within this distance (µm) of an anchor seed the rescued lumen. Paper text: 20 µm."""
 
-    min_cells_per_lesion: int = 5
+    min_cells_per_lesion: int = 4
     """Step 3. Epithelial lesions with fewer cells than this are not used as anchors. Original notebook: 4."""
 
     n_iterations: int = 2
