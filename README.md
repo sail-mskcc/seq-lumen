@@ -23,9 +23,9 @@ border_acc = A.obs["is_epithelial"]
 lumen_count_acc = A.obs["lumen_score_auto"]
 sample_acc = A.obs["sample_id"]
 # Resolve the parameters for quantification for all applicable samples.
-sl_quantifier = seq_lumen.Quantifier.from_samples(adata, centroids_acc=centroids_acc, sample_acc=sample_acc)
+sl_quantifier = seq_lumen.Quantifier.from_adata(adata, centroids_acc=centroids_acc, sample_acc=sample_acc)
 # Each value of `lumen` is a `(n_lumen_points, 2)` array of luminal centroids and the key is the sample id.
-lumen: dict[str, np.ndarray] = sl_quantifier.find_and_count_lumen(
+lumen: dict[str, np.ndarray] = sl_quantifier.find_and_count(
     adata, centroids_acc=centroids_acc, border_acc=border_acc, lumen_count_acc=lumen_count_acc, sample_acc=sample_acc
 )
 # The scores are available here per-cell

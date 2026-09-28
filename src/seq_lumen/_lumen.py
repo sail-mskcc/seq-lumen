@@ -132,11 +132,11 @@ class Quantifier:
     lumen_radius: float = 60
     """Radius (µm) of the circle around each cell in which lumen points are counted (paper uses 60 µm, Figure 2H).
 
-    Used in :meth:`count_lumen`.
+    Used in :meth:`count`.
     """
 
     @classmethod
-    def from_samples(
+    def from_adata(
         cls,
         adata: AnnData,
         *,
@@ -147,7 +147,7 @@ class Quantifier:
         seed: int = 0,
         **kwargs: Unpack[AutoSettings],
     ) -> Quantifier:
-        """Derive the density-grid spacing from cell spacing: one setting for a whole cohort.
+        """Derive the density-grid spacing from cell spacing: one setting for all possible samples.
 
         A density-grid point is empty when its `blurring_bandwidth * interpoint_distance`-wide window has no
         centroid, i.e. roughly when the gap around it is at least half that. So the grid is sized to put that
@@ -310,14 +310,14 @@ class Quantifier:
         return lumen
 
     @overload
-    def find_lumen(
+    def find(
         self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: None = None
     ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
     @overload
-    def find_lumen(
+    def find(
         self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef
     ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
-    def find_lumen(
+    def find(
         self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef | None = None
     ) -> (
         np.ndarray[tuple[int, int], np.dtype[np.floating]]
@@ -345,7 +345,7 @@ class Quantifier:
         if sample_acc is not None:
             labels = samples(adata, sample_acc)
             return {
-                s: self.find_lumen(adata[labels == s], centroids_acc=centroids_acc, border_acc=border_acc)
+                s: self.find(adata[labels == s], centroids_acc=centroids_acc, border_acc=border_acc)
                 for s in labels.categories
             }
         centroids, border_ids = centroids_and_border(adata, centroids_acc, border_acc)
@@ -378,7 +378,7 @@ class Quantifier:
         return self._rescue_points(lumen, remaining_empty, border_centroids)
 
     @overload
-    def count_lumen(
+    def count(
         self,
         adata: AnnData,
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
@@ -388,7 +388,7 @@ class Quantifier:
         sample_acc: None = None,
     ) -> None: ...
     @overload
-    def count_lumen(
+    def count(
         self,
         adata: AnnData,
         lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
@@ -397,7 +397,7 @@ class Quantifier:
         lumen_count_acc: AdRef,
         sample_acc: AdRef,
     ) -> None: ...
-    def count_lumen(
+    def count(
         self,
         adata: AnnData,
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]]
@@ -417,7 +417,7 @@ class Quantifier:
         adata
             The tissue section(s) `lumen` was computed from.
         lumen
-            `(n, 2)` lumen points, as returned by :meth:`find_lumen`.
+            `(n, 2)` lumen points, as returned by :meth:`find`.
             With `sample_acc`, a dict from each sample to its lumen points.
         centroids_acc
             Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
@@ -438,24 +438,24 @@ class Quantifier:
         if sample_acc is None:
             if isinstance(lumen, dict):
                 raise TypeError("`lumen` is per-sample, so pass the `sample_acc` it was found with")
-            adata.obs[col] = self._count_lumen(xy, lumen)
+            adata.obs[col] = self._count(xy, lumen)
             return
         if not isinstance(lumen, dict):
-            raise TypeError("with `sample_acc`, `lumen` must map each sample to its lumen, as from `find_lumen`")
+            raise TypeError("with `sample_acc`, `lumen` must map each sample to its lumen, as from `find`")
         labels = samples(adata, sample_acc)
         lumen_count = np.zeros(adata.n_obs, dtype=int)
         for s in labels.categories:
             mask = labels == s
-            lumen_count[mask] = self._count_lumen(xy[mask], lumen[s])
+            lumen_count[mask] = self._count(xy[mask], lumen[s])
         adata.obs[col] = lumen_count
 
-    def _count_lumen(self, xy: np.ndarray, lumen: np.ndarray) -> np.ndarray:
+    def _count(self, xy: np.ndarray, lumen: np.ndarray) -> np.ndarray:
         """Lumen points within :attr:`lumen_radius` of each of the `(n, 2)` `xy`."""
         circles = get_circles(xy[:, 0], xy[:, 1], self.lumen_radius)
         return count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
 
     @overload
-    def find_and_count_lumen(
+    def find_and_count(
         self,
         adata: AnnData,
         *,
@@ -465,10 +465,10 @@ class Quantifier:
         sample_acc: None = None,
     ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
     @overload
-    def find_and_count_lumen(
+    def find_and_count(
         self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, lumen_count_acc: AdRef, sample_acc: AdRef
     ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
-    def find_and_count_lumen(
+    def find_and_count(
         self,
         adata: AnnData,
         *,
@@ -480,7 +480,7 @@ class Quantifier:
         np.ndarray[tuple[int, int], np.dtype[np.floating]]
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]
     ):
-        """A small wrapper for :meth:`find_lumen` followed by :meth:`count_lumen`.
+        """A small wrapper for :meth:`find` followed by :meth:`count`.
 
         See their docstrings for more information.
 
@@ -503,9 +503,9 @@ class Quantifier:
         `(n, 2)` lumen points: x, y on the density grid (each point = `interpoint_distance**2` µm²).
         With `sample_acc`, a dict from each sample to its lumen points.
         """
-        lumen = self.find_lumen(adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc)
-        # mypy can't tell that `lumen` is a dict exactly when `sample_acc` is given; `count_lumen` checks at runtime.
-        self.count_lumen(
+        lumen = self.find(adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc)
+        # mypy can't tell that `lumen` is a dict exactly when `sample_acc` is given; `count` checks at runtime.
+        self.count(
             adata,
             lumen,  # type: ignore[arg-type]
             centroids_acc=centroids_acc,

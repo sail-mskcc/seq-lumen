@@ -4,7 +4,7 @@ from typing import TypedDict
 
 
 class AutoSettings(TypedDict, total=False):
-    """Overrides accepted by :meth:`~seq_lumen.Quantifier.from_samples`; each maps to a :class:`~seq_lumen.Quantifier` field."""
+    """Overrides accepted by :meth:`~seq_lumen.Quantifier.from_adata`; each maps to a :class:`~seq_lumen.Quantifier` field."""
 
     #: See :attr:`~seq_lumen.Quantifier.interpoint_distance`.
     interpoint_distance: float
