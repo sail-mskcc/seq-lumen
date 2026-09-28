@@ -2,55 +2,36 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Unpack, overload
 
 import cv2
 import numpy as np
+import pandas as pd
 from anndata.acc import AdRef, MetaAcc
-from scipy.spatial import KDTree
 from tqdm import tqdm
 
 from ._utils import (
-    attach_component_size,
+    centroids,
+    centroids_and_border,
     count_points_within_circles,
     filter_lesions_by_size,
+    gap_quantile,
     gen_bins,
     get_circles,
     pad_and_shift,
     propagate_points,
+    samples,
 )
 
 if TYPE_CHECKING:
     from anndata import AnnData
     from anndata.acc import MultiAcc
 
-
-def _centroids(adata: AnnData, centroids_acc: MultiAcc) -> np.ndarray:
-    """Look up and validate the `(n_obs, 2)` centroids."""
-    centroids = adata[centroids_acc]
-    if not isinstance(centroids, np.ndarray) or len(centroids.shape) != 2 or centroids.shape[1] != 2:
-        raise ValueError(f"{centroids_acc} must point at a n_obs x 2 array of points")
-    return centroids
-
-
-def _centroids_and_border(adata: AnnData, centroids_acc: MultiAcc, border_acc: AdRef) -> tuple[np.ndarray, np.ndarray]:
-    """Look up and validate the `(n_obs, 2)` centroids and the boolean `n_obs` border mask."""
-    if not (border_ids := adata[border_acc]).dtype == "bool":
-        raise ValueError("border must be marked with a boolean mask")
-    return _centroids(adata, centroids_acc), border_ids
-
-
-def _gap_quantile(xy: np.ndarray, quantile: float, rng: np.random.Generator) -> float:
-    """`quantile` of the distance from random in-tissue locations to the nearest centroid."""
-    # In tissue: >= 10 cells within 30 µm, so that large lumens and the outside don't count.
-    # ponytail: fixed tissue test and sample size; expose them if sections are much sparser or tinier.
-    locations = rng.uniform(xy.min(axis=0), xy.max(axis=0), size=(200_000, 2))
-    dist, _ = KDTree(xy).query(locations, k=10, distance_upper_bound=30)
-    return float(np.quantile(dist[np.isfinite(dist[:, -1]), 0], quantile))
+    from .types import AutoSettings
 
 
 @dataclass(frozen=True)
-class SeqLumen:
+class Quantifier:
     """Lumen detection from cell centroids (luminal-area steps 1-3 of the paper's STAR Methods).
 
     Every distance is in the units of the centroid coordinates. The defaults (and the paper) assume **µm**.
@@ -59,7 +40,7 @@ class SeqLumen:
     ---------
     1. **Empty space.** All centroids are binned onto the *density grid*, a mesh with spacing
        :attr:`interpoint_distance` (5 µm/px by default). The per-pixel cell counts are smoothed with a
-       :attr:`blurring_bandwdith`-px box filter, and pixels whose smoothed count is below :attr:`min_density`
+       :attr:`blurring_bandwidth`-px box filter, and pixels whose smoothed count is below :attr:`min_density`
        become *empty points*. Each empty point stands for `interpoint_distance**2` µm² of area.
     2. **Enclosed lumen.** The border (epithelial) centroids are drawn onto the *border raster* at 1 µm/px.
        The raster is dilated :attr:`n_iterations` times with a 10 px (10 µm) elliptical kernel to close gaps
@@ -98,12 +79,12 @@ class SeqLumen:
     """
 
     interpoint_distance: float = 5
-    """Spacing of the density grid in µm, i.e. its µm/px. Paper: "5 µm px⁻¹".
+    """Spacing of the density grid in µm, i.e. its µm/px (paper uses "5 µm px⁻¹").
 
     Used in step 1; one grid step is also how far the rescued lumen grows per iteration in step 3.
     """
 
-    blurring_bandwdith: int = 3
+    blurring_bandwidth: int = 3
     """Side of the box filter that smooths cell counts, in density-grid pixels (3 px x 5 µm/px = 15 µm).
 
     The paper describes a Gaussian with a 3 px bandwidth, but the code uses a 3x3 box filter (`cv2.blur`).
@@ -111,7 +92,7 @@ class SeqLumen:
     """
 
     min_density: float = 0.01
-    """Smoothed cell count per density-grid pixel (unitless) below which the pixel is empty. Paper: 0.01.
+    """Smoothed cell count per density-grid pixel (unitless) below which the pixel is empty (paper uses 0.01).
 
     With a 3x3 box filter, one centroid anywhere in the window gives 1/9,
     so in practice this means "no centroid within ±1 grid pixel (±5 µm)". Used in step 1.
@@ -124,7 +105,7 @@ class SeqLumen:
     """
 
     rescue_max_distance: float = 15
-    """Distance (µm) from an anchor within which candidates seed the rescued lumen. Paper text: 20 µm.
+    """Distance (µm) from an anchor within which candidates seed the rescued lumen (paper text says 20 µm).
 
     Used in step 3.
     """
@@ -143,19 +124,19 @@ class SeqLumen:
     """
 
     anchor_max_distance: float = 20
-    """Distance (µm) below which two border cells belong to the same lesion. Paper: 20 µm.
+    """Distance (µm) below which two border cells belong to the same lesion (paper uses 20 µm).
 
     Used in step 3.
     """
 
     lumen_radius: float = 60
-    """Radius (µm) of the circle around each cell in which lumen points are counted. Paper: 60 µm (Figure 2H).
+    """Radius (µm) of the circle around each cell in which lumen points are counted (paper uses 60 µm, Figure 2H).
 
     Used in :meth:`count_lumen`.
     """
 
     @classmethod
-    def from_centroids(
+    def from_samples(
         cls,
         adata: AnnData,
         *,
@@ -164,16 +145,16 @@ class SeqLumen:
         quantile: float = 0.95,
         rtol: float = 0.2,
         seed: int = 0,
-        **kwargs,
-    ) -> SeqLumen:
+        **kwargs: Unpack[AutoSettings],
+    ) -> Quantifier:
         """Derive the density-grid spacing from cell spacing: one setting for a whole cohort.
 
-        A density-grid point is empty when its `blurring_bandwdith * interpoint_distance`-wide window has no
+        A density-grid point is empty when its `blurring_bandwidth * interpoint_distance`-wide window has no
         centroid, i.e. roughly when the gap around it is at least half that. So the grid is sized to put that
         half-width at the `quantile` of gaps (distance to the nearest centroid) *inside tissue*, which makes
         ordinary intercellular gaps rarely count as empty:
 
-        - :attr:`interpoint_distance` = `2 * Q(gap) / blurring_bandwdith`
+        - :attr:`interpoint_distance` = `2 * Q(gap) / blurring_bandwidth`
         - :attr:`rescue_max_distance` = `2 * interpoint_distance`: about one grid row beyond the closest an empty
           point can get to a cell.
 
@@ -191,7 +172,7 @@ class SeqLumen:
         centroids_acc
             Accessor for an `(n_obs, 2)` array of cell centroids (µm).
         sample_acc
-            `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
             If `None`, `adata` is a single section.
         quantile
             Quantile of the in-tissue gap distribution the emptiness window must exceed.
@@ -200,13 +181,13 @@ class SeqLumen:
         seed
             Seed for sampling the gap distribution.
         kwargs
-            Any other fields, overriding the derived ones (`blurring_bandwdith` is used in the derivation).
+            Any other fields, overriding the derived ones (`blurring_bandwidth` is used in the derivation).
         """
-        xy = _centroids(adata, centroids_acc)
-        samples = np.zeros(len(xy), dtype=int) if sample_acc is None else np.asarray(adata[sample_acc])
-        blur = kwargs.get("blurring_bandwdith", cls.blurring_bandwdith)
+        xy = centroids(adata, centroids_acc)
+        labels = pd.Categorical(np.zeros(len(xy), dtype=int)) if sample_acc is None else samples(adata, sample_acc)
+        blur = kwargs.get("blurring_bandwidth", cls.blurring_bandwidth)
         rng = np.random.default_rng(seed)
-        per_sample = {s: 2 * _gap_quantile(xy[samples == s], quantile, rng) / blur for s in np.unique(samples)}
+        per_sample = {s: 2 * gap_quantile(xy[labels == s], quantile, rng) / blur for s in labels.categories}
 
         interpoint_distance = float(np.median(list(per_sample.values())))
         if off := {s: round(d, 1) for s, d in per_sample.items() if abs(d / interpoint_distance - 1) > rtol}:
@@ -216,8 +197,11 @@ class SeqLumen:
                 UserWarning,
                 stacklevel=2,
             )
-        derived = {"interpoint_distance": interpoint_distance, "rescue_max_distance": 2 * interpoint_distance}
-        return cls(**{**derived, **kwargs})
+        derived: AutoSettings = {
+            "interpoint_distance": interpoint_distance,
+            "rescue_max_distance": 2 * interpoint_distance,
+        }
+        return cls(**(derived | kwargs))
 
     def _empty_regions(self, xy: np.ndarray) -> np.ndarray:
         """Step 1: density-grid points with no nearby cells.
@@ -245,7 +229,7 @@ class SeqLumen:
 
         # Blur cellular density estimate and find x,y coordinates that have very few cells (empty regions)
         # Divergence from paper: a box filter (`cv2.blur`), not a Gaussian.
-        empty_bins = np.ravel(cv2.blur(h[0].T, (self.blurring_bandwdith, self.blurring_bandwdith)) < self.min_density)
+        empty_bins = np.ravel(cv2.blur(h[0].T, (self.blurring_bandwidth, self.blurring_bandwidth)) < self.min_density)
         xval_linear, yval_linear = (np.ravel(base)[empty_bins] for base in (xx_base, yy_base))
 
         # These are the empty points
@@ -265,8 +249,8 @@ class SeqLumen:
         Note the 1-px offset: `output[i + 1, j + 1]` corresponds to `rasterized[i, j]`.
         """
         h, w = rasterized.shape
-        # Divergence from paper: 10 px on the 1 µm/px raster is 10 µm (paper: 10 px on the 5 µm grid),
-        # and it dilates `n_iterations` times and erodes `n_iterations + 1` times (paper: 1 each).
+        # Divergence from paper: 10 px on the 1 µm/px raster is 10 µm (paper uses 10 px on the 5 µm grid),
+        # and it dilates `n_iterations` times and erodes `n_iterations + 1` times (paper uses 1 each).
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
         dilation = cv2.dilate(rasterized, kernel, iterations=self.n_iterations)
         del rasterized
@@ -283,8 +267,11 @@ class SeqLumen:
         return cv2.erode(final, kernel, iterations=self.n_iterations + 1)
 
     def _rescue_points(
-        self, lumen: np.ndarray, remaining_empty: np.ndarray, border_centroids: np.ndarray
-    ) -> np.ndarray:
+        self,
+        lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
+        remaining_empty: np.ndarray,
+        border_centroids: np.ndarray,
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
         """Step 3: grow lumen outward from epithelial anchor cells into empty points that aren't enclosed.
 
         Parameters
@@ -298,19 +285,16 @@ class SeqLumen:
 
         Returns
         -------
-        `(n + r, 3)` lumen points with their component size (0 for enclosed lumen).
+        `(n + r, 2)` enclosed and rescued lumen points.
         """
         # Anchors: epithelial cells in lesions of >= `min_cells_per_lesion` cells.
         # Note on the paper: the lesion-size filter, `candidate_max_distance` and the 5-iteration cap aren't described.
         anchor_points = filter_lesions_by_size(
             border_centroids, max_distance=self.anchor_max_distance, min_cells_per_lesion=self.min_cells_per_lesion
         )
-        # Enclosed (step 2) lumen gets component size 0 in the 3rd column.
-        lumen = np.concatenate((lumen, np.array([0] * lumen.shape[0])[:, None]), axis=1)
-
         candidate_points = propagate_points(anchor_points, remaining_empty, max_distance=self.candidate_max_distance)
         # candidate_points = remaining_empty
-        # Divergence from paper: seeds within `rescue_max_distance` = 15 µm (paper: 20 µm). This is what is done in Jose's notebook.
+        # Divergence from paper: seeds within `rescue_max_distance` = 15 µm (paper uses 20 µm). This is what is done in Jose's notebook.
         rescued = propagate_points(anchor_points, candidate_points, max_distance=self.rescue_max_distance)
         # Grow one density-grid step per iteration: `interpoint_distance + 1` reaches the 4 direct neighbours
         # (5 µm) but not diagonals (~7.1 µm). Max reach ≈ rescue_max_distance + 5 * interpoint_distance = 40 µm.
@@ -321,28 +305,50 @@ class SeqLumen:
         if len(rescued) > 0:
             for _ in tqdm(range(num_propagate)):
                 rescued = propagate_points(rescued, candidate_points, max_distance=self.interpoint_distance + 1)
-            lumen = np.concatenate((lumen, attach_component_size(rescued, max_distance=self.interpoint_distance + 1)))
+            lumen = np.concatenate((lumen, rescued))
 
         return lumen
 
-    def lumen_coords(self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef) -> np.ndarray:
+    @overload
+    def find_lumen(
+        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: None = None
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
+    @overload
+    def find_lumen(
+        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef
+    ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
+    def find_lumen(
+        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef | None = None
+    ) -> (
+        np.ndarray[tuple[int, int], np.dtype[np.floating]]
+        | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]
+    ):
         """Find luminal points.
 
         Parameters
         ----------
         adata
-            One tissue section.
+            One tissue section, or several if `sample_acc` is given.
         centroids_acc
             Accessor for an `(n_obs, 2)` array of cell centroids (µm for the default parameters, non-negative).
         border_acc
             Accessor for a boolean `n_obs` mask of the cells lining lumens (epithelial cells).
+        sample_acc
+            Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            Each section is processed on its own. If `None`, `adata` is a single section.
 
         Returns
         -------
-        `(n, 3)` lumen points: x, y on the density grid (each point = `interpoint_distance**2` µm²) and the size
-        of the rescued connected component it belongs to (0 for points inside a closed hole from step 2).
+        `(n, 2)` lumen points: x, y on the density grid (each point = `interpoint_distance**2` µm²).
+        With `sample_acc`, a dict from each sample to its lumen points.
         """
-        centroids, border_ids = _centroids_and_border(adata, centroids_acc, border_acc)
+        if sample_acc is not None:
+            labels = samples(adata, sample_acc)
+            return {
+                s: self.find_lumen(adata[labels == s], centroids_acc=centroids_acc, border_acc=border_acc)
+                for s in labels.categories
+            }
+        centroids, border_ids = centroids_and_border(adata, centroids_acc, border_acc)
         empty_region_coords = self._empty_regions(centroids)
         empty_region_coords = empty_region_coords - self.interpoint_distance / 2
         border_centroids = centroids[border_ids, :].copy()
@@ -371,8 +377,35 @@ class SeqLumen:
         # Step 3. Rescue empty points that are also in lumen, but were not captured because cysts were not completely filled
         return self._rescue_points(lumen, remaining_empty, border_centroids)
 
+    @overload
     def count_lumen(
-        self, adata: AnnData, lumen: np.ndarray, *, centroids_acc: MultiAcc, lumen_count_acc: AdRef
+        self,
+        adata: AnnData,
+        lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
+        *,
+        centroids_acc: MultiAcc,
+        lumen_count_acc: AdRef,
+        sample_acc: None = None,
+    ) -> None: ...
+    @overload
+    def count_lumen(
+        self,
+        adata: AnnData,
+        lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
+        *,
+        centroids_acc: MultiAcc,
+        lumen_count_acc: AdRef,
+        sample_acc: AdRef,
+    ) -> None: ...
+    def count_lumen(
+        self,
+        adata: AnnData,
+        lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]]
+        | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
+        *,
+        centroids_acc: MultiAcc,
+        lumen_count_acc: AdRef,
+        sample_acc: AdRef | None = None,
     ) -> None:
         """Count lumen points within :attr:`lumen_radius` of each cell, i.e. the paper's "lumen area".
 
@@ -382,21 +415,101 @@ class SeqLumen:
         Parameters
         ----------
         adata
-            The tissue section `lumen` was computed from.
+            The tissue section(s) `lumen` was computed from.
         lumen
-            `(n, 2+)` lumen points, as returned by :meth:`lumen_coords` (only x, y are used).
+            `(n, 2)` lumen points, as returned by :meth:`find_lumen`.
+            With `sample_acc`, a dict from each sample to its lumen points.
         centroids_acc
             Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
         lumen_count_acc
             `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
+        sample_acc
+            Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            Each cell only counts its own section's lumen. If `None`, `adata` is a single section.
         """
-        centroids = adata[centroids_acc]
-        circles = get_circles(centroids[:, 0], centroids[:, 1], self.lumen_radius)
-        lumen_count = count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
         match lumen_count_acc:
             case AdRef(acc=MetaAcc(dim="obs"), idx=str(col)):
-                adata.obs[col] = lumen_count
+                pass
             case _:
                 raise TypeError(
                     f"`lumen_count_acc` must be an `obs` column accessor like `A.obs['col']`, not {lumen_count_acc!r}"
                 )
+        xy = adata[centroids_acc]
+        if sample_acc is None:
+            if isinstance(lumen, dict):
+                raise TypeError("`lumen` is per-sample, so pass the `sample_acc` it was found with")
+            adata.obs[col] = self._count_lumen(xy, lumen)
+            return
+        if not isinstance(lumen, dict):
+            raise TypeError("with `sample_acc`, `lumen` must map each sample to its lumen, as from `find_lumen`")
+        labels = samples(adata, sample_acc)
+        lumen_count = np.zeros(adata.n_obs, dtype=int)
+        for s in labels.categories:
+            mask = labels == s
+            lumen_count[mask] = self._count_lumen(xy[mask], lumen[s])
+        adata.obs[col] = lumen_count
+
+    def _count_lumen(self, xy: np.ndarray, lumen: np.ndarray) -> np.ndarray:
+        """Lumen points within :attr:`lumen_radius` of each of the `(n, 2)` `xy`."""
+        circles = get_circles(xy[:, 0], xy[:, 1], self.lumen_radius)
+        return count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
+
+    @overload
+    def find_and_count_lumen(
+        self,
+        adata: AnnData,
+        *,
+        centroids_acc: MultiAcc,
+        border_acc: AdRef,
+        lumen_count_acc: AdRef,
+        sample_acc: None = None,
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
+    @overload
+    def find_and_count_lumen(
+        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, lumen_count_acc: AdRef, sample_acc: AdRef
+    ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
+    def find_and_count_lumen(
+        self,
+        adata: AnnData,
+        *,
+        centroids_acc: MultiAcc,
+        border_acc: AdRef,
+        lumen_count_acc: AdRef,
+        sample_acc: AdRef | None = None,
+    ) -> (
+        np.ndarray[tuple[int, int], np.dtype[np.floating]]
+        | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]
+    ):
+        """A small wrapper for :meth:`find_lumen` followed by :meth:`count_lumen`.
+
+        See their docstrings for more information.
+
+        Parameters
+        ----------
+        adata
+            The tissue section `lumen` was computed from.
+        centroids_acc
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
+        border_acc
+            Accessor for a boolean `n_obs` mask of the cells lining lumens (epithelial cells).
+        lumen_count_acc
+            `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
+        sample_acc
+            Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            If `None`, `adata` is a single section.
+
+        Returns
+        -------
+        `(n, 2)` lumen points: x, y on the density grid (each point = `interpoint_distance**2` µm²).
+        With `sample_acc`, a dict from each sample to its lumen points.
+        """
+        lumen = self.find_lumen(adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc)
+        # mypy can't tell that `lumen` is a dict exactly when `sample_acc` is given; `count_lumen` checks at runtime.
+        self.count_lumen(
+            adata,
+            lumen,  # type: ignore[arg-type]
+            centroids_acc=centroids_acc,
+            lumen_count_acc=lumen_count_acc,
+            sample_acc=sample_acc,  # type: ignore[arg-type]
+        )
+        return lumen

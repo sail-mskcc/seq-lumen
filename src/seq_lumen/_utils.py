@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+import pandas as pd
 import scipy as sp
 from geopandas import GeoDataFrame, points_from_xy
+from scipy.spatial import KDTree
 from shapely import GeometryType
 from shapely.io import from_ragged_array
 from sklearn.neighbors import radius_neighbors_graph
+
+if TYPE_CHECKING:
+    from anndata import AnnData
+    from anndata.acc import AdRef, MultiAcc
 
 
 def gen_bins(x: np.ndarray, pixel_size: float) -> np.ndarray:
@@ -44,26 +52,6 @@ def propagate_points(anchor: np.ndarray, candidate: np.ndarray, max_distance: fl
     anchor_neighbor = np.ravel(neighbor_graph[:, point_label == 1].sum(axis=1))[point_label == 0] > 0
     rescue_points = candidate[anchor_neighbor, :]
     return rescue_points
-
-
-def attach_component_size(points: np.ndarray, max_distance: float = 20) -> np.ndarray:
-    """Append the size of each point's connected component as a 3rd column.
-
-    Parameters
-    ----------
-    points
-        `(n, 2)` points.
-    max_distance
-        Points closer than this (centroid units, µm) are connected.
-
-    Returns
-    -------
-    `(n, 3)` array: x, y, number of points in the component.
-    """
-    neighbor_graph = radius_neighbors_graph(points, radius=max_distance)
-    connected_components = sp.sparse.csgraph.connected_components(neighbor_graph)[1]
-    component_size = np.bincount(connected_components)[connected_components]
-    return np.concatenate((points, component_size[:, None]), axis=1)
 
 
 def filter_lesions_by_size(points: np.ndarray, max_distance: float = 20, min_cells_per_lesion: int = 5) -> np.ndarray:
@@ -157,3 +145,36 @@ def count_points_within_circles(centers_x: np.ndarray, centers_y: np.ndarray, ci
     result = np.array([0] * circles.shape[0])
     result[point_count.index.to_numpy()] = point_count.to_numpy()
     return result
+
+
+def centroids(adata: AnnData, centroids_acc: MultiAcc) -> np.ndarray:
+    """Look up and validate the `(n_obs, 2)` centroids."""
+    centroids = adata[centroids_acc]
+    if not isinstance(centroids, np.ndarray) or len(centroids.shape) != 2 or centroids.shape[1] != 2:
+        raise ValueError(f"{centroids_acc} must point at a n_obs x 2 array of points")
+    return centroids
+
+
+def centroids_and_border(adata: AnnData, centroids_acc: MultiAcc, border_acc: AdRef) -> tuple[np.ndarray, np.ndarray]:
+    """Look up and validate the `(n_obs, 2)` centroids and the boolean `n_obs` border mask."""
+    if not (border_ids := adata[border_acc]).dtype == "bool":
+        raise ValueError("border must be marked with a boolean mask")
+    return centroids(adata, centroids_acc), border_ids
+
+
+def samples(adata: AnnData, sample_acc: AdRef) -> pd.Categorical:
+    """Look up and validate the categorical `n_obs` sample labels; unused categories are dropped."""
+    if not isinstance(labels := adata[sample_acc], pd.Categorical):
+        raise TypeError(f"{sample_acc} must point at a categorical column, e.g. `adata.obs[col].astype('category')`")
+    if labels.isna().any():
+        raise ValueError(f"{sample_acc} has missing values; every cell needs a sample")
+    return labels.remove_unused_categories()
+
+
+def gap_quantile(xy: np.ndarray, quantile: float, rng: np.random.Generator) -> float:
+    """`quantile` of the distance from random in-tissue locations to the nearest centroid."""
+    # In tissue: >= 10 cells within 30 µm, so that large lumens and the outside don't count.
+    # ponytail: fixed tissue test and sample size; expose them if sections are much sparser or tinier.
+    locations = rng.uniform(xy.min(axis=0), xy.max(axis=0), size=(200_000, 2))
+    dist, _ = KDTree(xy).query(locations, k=10, distance_upper_bound=30)
+    return float(np.quantile(dist[np.isfinite(dist[:, -1]), 0], quantile))

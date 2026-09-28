@@ -1,39 +1,18 @@
 # API
 
-## Preprocessing
-
 ```{eval-rst}
-.. module:: seq_lumen.pp
+.. module:: seq_lumen
 .. currentmodule:: seq_lumen
 
 .. autosummary::
     :toctree: generated
 
-    pp.basic_preproc
-    pp.elaborate_example
+    Quantifier
 ```
 
-## Tools
+## Types
 
 ```{eval-rst}
-.. module:: seq_lumen.tl
-.. currentmodule:: seq_lumen
-
-.. autosummary::
-    :toctree: generated
-
-    tl.basic_tool
-```
-
-## Plotting
-
-```{eval-rst}
-.. module:: seq_lumen.pl
-.. currentmodule:: seq_lumen
-
-.. autosummary::
-    :toctree: generated
-
-    pl.basic_plot
-    pl.BasicClass
+.. autoclass:: seq_lumen.types.AutoSettings
+    :members:
 ```

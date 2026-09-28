@@ -6,12 +6,35 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/ilan-gold/seq_lumen/test.yaml?branch=main
 [badge-docs]: https://app.readthedocs.org/projects/seq_lumen/badge/
 
-A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.
+A small package for lumen/luminal-structure quantification only from centroids. Based on {cite}`Reyes2026`'s method.
 
 ## Getting started
 
 Please refer to the [documentation][],
 in particular, the [API documentation][].
+
+```python
+import seq_lumen
+from anndata.acc import A
+
+# Set up relevant accessors for each relevant field.
+centroids_acc = A.obsm["X_spatial"]
+border_acc = A.obs["is_epithelial"]
+lumen_count_acc = A.obs["lumen_score_auto"]
+sample_acc = A.obs["sample_id"]
+# Resolve the parameters for quantification for all applicable samples.
+sl_quantifier = seq_lumen.Quantifier.from_samples(adata, centroids_acc=centroids_acc, sample_acc=sample_acc)
+# Each value of `lumen` is a `(n_lumen_points, 2)` array of luminal centroids and the key is the sample id.
+lumen: dict[str, np.ndarray] = sl_quantifier.find_and_count_lumen(
+    adata, centroids_acc=centroids_acc, border_acc=border_acc, lumen_count_acc=lumen_count_acc, sample_acc=sample_acc
+)
+# The scores are available here per-cell
+assert lumen_count_acc in adata
+```
+
+## Divergences from the Original
+
+There are a combination of fixes/divergences from the original code/paper, some bugs, some things being misreported. These are indicated within the code and in the docstring of {class}`seq_lumen.Quantifier`
 
 ## Installation
 
@@ -55,7 +78,7 @@ If you found a bug, please use the [issue tracker][].
 
 ## Citation
 
-> t.b.a
+{cite}`Reyes2026`
 
 [uv]: https://github.com/astral-sh/uv
 [scverse discourse]: https://discourse.scverse.org/
