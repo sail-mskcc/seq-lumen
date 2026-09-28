@@ -1,172 +1,52 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-import scipy as sp
 from anndata.acc import AdRef, MetaAcc
-from geopandas import GeoDataFrame, points_from_xy
-from shapely import GeometryType
-from shapely.io import from_ragged_array
-from sklearn.neighbors import radius_neighbors_graph
+from scipy.spatial import KDTree
 from tqdm import tqdm
+
+from ._utils import (
+    attach_component_size,
+    count_points_within_circles,
+    filter_lesions_by_size,
+    gen_bins,
+    get_circles,
+    pad_and_shift,
+    propagate_points,
+)
 
 if TYPE_CHECKING:
     from anndata import AnnData
     from anndata.acc import MultiAcc
 
 
-def _gen_bins(x: np.ndarray, pixel_size: float) -> np.ndarray:
-    """Evenly spaced points from `min(x)` to `max(x)`, roughly `pixel_size` apart (in the units of `x`).
-
-    `linspace` includes both ends, so the true spacing is `extent / (n - 1)`, slightly larger than `pixel_size`.
-    """
-    return np.linspace(np.min(x), np.max(x), int((np.max(x) - np.min(x)) / pixel_size))
-
-
-def _pad_and_shift(x: np.ndarray) -> np.ndarray:
-    """Turn evenly spaced bin centers into `len(x) + 1` bin edges (shift by half a step, append one more edge)."""
-    x_diffed = x - np.diff(x)[0] / 2
-    return np.append(x_diffed, np.max(x_diffed) + np.diff(x_diffed)[0])
+def _centroids(adata: AnnData, centroids_acc: MultiAcc) -> np.ndarray:
+    """Look up and validate the `(n_obs, 2)` centroids."""
+    centroids = adata[centroids_acc]
+    if not isinstance(centroids, np.ndarray) or len(centroids.shape) != 2 or centroids.shape[1] != 2:
+        raise ValueError(f"{centroids_acc} must point at a n_obs x 2 array of points")
+    return centroids
 
 
-def propagate_points(anchor: np.ndarray, candidate: np.ndarray, max_distance: float = 20) -> np.ndarray:
-    """Rows of `candidate` that lie within `max_distance` (centroid units) of any row of `anchor`.
-
-    Parameters
-    ----------
-    anchor
-        `(n, 2)` points to grow from.
-    candidate
-        `(m, 2)` points that may be reached.
-    max_distance
-        Search radius, in centroid units (µm).
-
-    Returns
-    -------
-    The `(k, 2)` subset of `candidate` that was reached.
-    """
-    joined_points = np.concatenate((candidate, anchor))
-    point_label = np.array([0] * candidate.shape[0] + [1] * anchor.shape[0])
-    neighbor_graph = radius_neighbors_graph(joined_points, radius=max_distance, include_self=True)
-    anchor_neighbor = np.ravel(neighbor_graph[:, point_label == 1].sum(axis=1))[point_label == 0] > 0
-    rescue_points = candidate[anchor_neighbor, :]
-    return rescue_points
+def _centroids_and_border(adata: AnnData, centroids_acc: MultiAcc, border_acc: AdRef) -> tuple[np.ndarray, np.ndarray]:
+    """Look up and validate the `(n_obs, 2)` centroids and the boolean `n_obs` border mask."""
+    if not (border_ids := adata[border_acc]).dtype == "bool":
+        raise ValueError("border must be marked with a boolean mask")
+    return _centroids(adata, centroids_acc), border_ids
 
 
-def attach_component_size(points: np.ndarray, max_distance: float = 20) -> np.ndarray:
-    """Append the size of each point's connected component as a 3rd column.
-
-    Parameters
-    ----------
-    points
-        `(n, 2)` points.
-    max_distance
-        Points closer than this (centroid units, µm) are connected.
-
-    Returns
-    -------
-    `(n, 3)` array: x, y, number of points in the component.
-    """
-    neighbor_graph = radius_neighbors_graph(points, radius=max_distance)
-    connected_components = sp.sparse.csgraph.connected_components(neighbor_graph)[1]
-    component_size = np.bincount(connected_components)[connected_components]
-    return np.concatenate((points, component_size[:, None]), axis=1)
-
-
-def filter_lesions_by_size(points: np.ndarray, max_distance: float = 20, min_cells_per_lesion: int = 5) -> np.ndarray:
-    """Keep only points in connected components with at least `min_cells_per_lesion` points.
-
-    With epithelial centroids this is the paper's "lesion": cells within 20 µm of each other, lesion size = component size.
-
-    Parameters
-    ----------
-    points
-        `(n, 2)` points.
-    max_distance
-        Points closer than this (centroid units, µm) are connected.
-    min_cells_per_lesion
-        Minimum component size to keep.
-
-    Returns
-    -------
-    The `(k, 2)` subset of `points` in large-enough components.
-    """
-    neighbor_graph = radius_neighbors_graph(points, radius=max_distance)
-    connected_components = sp.sparse.csgraph.connected_components(neighbor_graph)[1]
-    lesion_size = np.bincount(connected_components)[connected_components]
-    return points[lesion_size >= min_cells_per_lesion, :].copy()
-
-
-def circles_to_polygons(gdf: GeoDataFrame) -> GeoDataFrame:
-    """Buffer each point in `gdf` by its `radius` column into a polygon (port of spatialdata's `circles_to_polygons`).
-
-    Each circle becomes a 64-gon (`quad_segs=16` per quarter) inscribed in the true circle,
-    so it undershoots the radius by at most `radius * (1 - cos(pi / 64))` ≈ 0.07 µm at 60 µm.
-
-    Parameters
-    ----------
-    gdf
-        Point geometries with a `radius` column (µm).
-
-    Returns
-    -------
-    A copy of `gdf` with polygon geometries.
-    """
-    buffered_df = gdf.copy()
-    # quad_segs is the default from spatialdata
-    buffered_df["geometry"] = buffered_df.apply(lambda row: row.geometry.buffer(row["radius"], quad_segs=16), axis=1)
-
-    # Ensure the GeoDataFrame recognizes the updated geometry column
-    buffered_df = buffered_df.set_geometry("geometry")
-
-    return buffered_df
-
-
-def get_circles(centers_x: np.ndarray, centers_y: np.ndarray, outer_radius: float) -> GeoDataFrame:
-    """Circles of radius `outer_radius` around each center, as polygons.
-
-    Parameters
-    ----------
-    centers_x, centers_y
-        `(n,)` center coordinates (µm).
-    outer_radius
-        Circle radius (µm).
-
-    Returns
-    -------
-    `n` polygons, indexed `0..n-1` in the order of the centers.
-    """
-    data = np.column_stack((centers_x, centers_y))
-    geometry_type = GeometryType(0)
-    geometries = from_ragged_array(geometry_type=geometry_type, coords=data)
-    dilated_circles_outer = GeoDataFrame({"geometry": geometries, "radius": outer_radius})
-    circles = circles_to_polygons(dilated_circles_outer)
-    return circles
-
-
-def count_points_within_circles(centers_x: np.ndarray, centers_y: np.ndarray, circles: GeoDataFrame) -> np.ndarray:
-    """Number of points inside (or on the boundary of) each circle.
-
-    Parameters
-    ----------
-    centers_x, centers_y
-        `(m,)` coordinates of the points to count (despite the name, these are not the circle centers).
-    circles
-        `n` polygons indexed `0..n-1`, as returned by :func:`get_circles`.
-
-    Returns
-    -------
-    `(n,)` integer counts, aligned with `circles`.
-    """
-    shapely_points = GeoDataFrame(geometry=points_from_xy(centers_x, centers_y))
-    joined = circles.sjoin(shapely_points)
-    point_count = joined.index.value_counts()
-    result = np.array([0] * circles.shape[0])
-    result[point_count.index.to_numpy()] = point_count.to_numpy()
-    return result
+def _gap_quantile(xy: np.ndarray, quantile: float, rng: np.random.Generator) -> float:
+    """`quantile` of the distance from random in-tissue locations to the nearest centroid."""
+    # In tissue: >= 10 cells within 30 µm, so that large lumens and the outside don't count.
+    # ponytail: fixed tissue test and sample size; expose them if sections are much sparser or tinier.
+    locations = rng.uniform(xy.min(axis=0), xy.max(axis=0), size=(200_000, 2))
+    dist, _ = KDTree(xy).query(locations, k=10, distance_upper_bound=30)
+    return float(np.quantile(dist[np.isfinite(dist[:, -1]), 0], quantile))
 
 
 @dataclass(frozen=True)
@@ -274,6 +154,71 @@ class SeqLumen:
     Used in :meth:`count_lumen`.
     """
 
+    @classmethod
+    def from_centroids(
+        cls,
+        adata: AnnData,
+        *,
+        centroids_acc: MultiAcc,
+        sample_acc: AdRef | None = None,
+        quantile: float = 0.95,
+        rtol: float = 0.2,
+        seed: int = 0,
+        **kwargs,
+    ) -> SeqLumen:
+        """Derive the density-grid spacing from cell spacing: one setting for a whole cohort.
+
+        A density-grid point is empty when its `blurring_bandwdith * interpoint_distance`-wide window has no
+        centroid, i.e. roughly when the gap around it is at least half that. So the grid is sized to put that
+        half-width at the `quantile` of gaps (distance to the nearest centroid) *inside tissue*, which makes
+        ordinary intercellular gaps rarely count as empty:
+
+        - :attr:`interpoint_distance` = `2 * Q(gap) / blurring_bandwdith`
+        - :attr:`rescue_max_distance` = `2 * interpoint_distance`: about one grid row beyond the closest an empty
+          point can get to a cell.
+
+        Each section is estimated on its own (coordinates of different sections overlap) and the median is used,
+        so that every section is measured with the same parameters and lumen area stays comparable across them.
+        Everything else keeps its default: parameters derived from epithelial spacing were dominated by isolated
+        epithelial cells and unstable across sections.
+
+        Calibrate once and reuse the result: adding sections can shift the median.
+
+        Parameters
+        ----------
+        adata
+            One or more tissue sections.
+        centroids_acc
+            Accessor for an `(n_obs, 2)` array of cell centroids (µm).
+        sample_acc
+            `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            If `None`, `adata` is a single section.
+        quantile
+            Quantile of the in-tissue gap distribution the emptiness window must exceed.
+        rtol
+            Warn about sections whose own `interpoint_distance` is more than this fraction away from the median.
+        seed
+            Seed for sampling the gap distribution.
+        kwargs
+            Any other fields, overriding the derived ones (`blurring_bandwdith` is used in the derivation).
+        """
+        xy = _centroids(adata, centroids_acc)
+        samples = np.zeros(len(xy), dtype=int) if sample_acc is None else np.asarray(adata[sample_acc])
+        blur = kwargs.get("blurring_bandwdith", cls.blurring_bandwdith)
+        rng = np.random.default_rng(seed)
+        per_sample = {s: 2 * _gap_quantile(xy[samples == s], quantile, rng) / blur for s in np.unique(samples)}
+
+        interpoint_distance = float(np.median(list(per_sample.values())))
+        if off := {s: round(d, 1) for s, d in per_sample.items() if abs(d / interpoint_distance - 1) > rtol}:
+            warnings.warn(
+                f"interpoint_distance is {interpoint_distance:.1f} (median), but these sections differ by more "
+                f"than {rtol:.0%}: {off}. Check them before comparing lumen across sections.",
+                UserWarning,
+                stacklevel=2,
+            )
+        derived = {"interpoint_distance": interpoint_distance, "rescue_max_distance": 2 * interpoint_distance}
+        return cls(**{**derived, **kwargs})
+
     def _empty_regions(self, xy: np.ndarray) -> np.ndarray:
         """Step 1: density-grid points with no nearby cells.
 
@@ -290,13 +235,13 @@ class SeqLumen:
 
         # Create bins of size `interpoint_distance` based on the x and y dimensions
         # Divergence from notebook: `yy` there was sized with `x`'s extent, so its spacing wasn't `interpoint_distance`.
-        xx, yy = (_gen_bins(e, self.interpoint_distance) for e in [x, y])
+        xx, yy = (gen_bins(e, self.interpoint_distance) for e in [x, y])
 
         # Generate 2d grid from the 1d bins
         xx_base, yy_base = np.meshgrid(xx, yy)
 
         # Get cell density in each point along each bin
-        h = np.histogram2d(x, y, tuple(_pad_and_shift(e) for e in [xx, yy]))
+        h = np.histogram2d(x, y, tuple(pad_and_shift(e) for e in [xx, yy]))
 
         # Blur cellular density estimate and find x,y coordinates that have very few cells (empty regions)
         # Divergence from paper: a box filter (`cv2.blur`), not a Gaussian.
@@ -397,11 +342,7 @@ class SeqLumen:
         `(n, 3)` lumen points: x, y on the density grid (each point = `interpoint_distance**2` µm²) and the size
         of the rescued connected component it belongs to (0 for points inside a closed hole from step 2).
         """
-        centroids = adata[centroids_acc]
-        if not (border_ids := adata[border_acc]).dtype == "bool":
-            raise ValueError("border must be marked with a boolean mask")
-        if not isinstance(centroids, np.ndarray) or len(centroids.shape) != 2 or centroids.shape[1] != 2:
-            raise ValueError(f"{centroids_acc} must point at a n_obs x 2 array of points")
+        centroids, border_ids = _centroids_and_border(adata, centroids_acc, border_acc)
         empty_region_coords = self._empty_regions(centroids)
         empty_region_coords = empty_region_coords - self.interpoint_distance / 2
         border_centroids = centroids[border_ids, :].copy()
