@@ -80,7 +80,7 @@ If you found a bug, please use the [issue tracker][].
 
 ## Citation
 
-{cite}`Reyes2026`
+Reyes, J., Del Priore, I., Chaikovsky, A. C., Pasnuri, N., Elhossiny, A. M., Park, J., Weiler, P., Krause, T., Moorman, A., Snopkowski, C., Takizawa, M., Burdziak, C., Ratnayeke, N., Masilionis, I., Ho, Y.-J., Chaligné, R., Romesser, P. B., Filliol, A., Nawy, T., … Lowe, S. W. (2026). Oncogenic and tumor-suppressive forces converge on a progenitor niche at the benign-to-malignant transition. Cell, 189(10), 2875–2897.e53. https://doi.org/10.1016/j.cell.2026.03.032
 
 [uv]: https://github.com/astral-sh/uv
 [scverse discourse]: https://discourse.scverse.org/
