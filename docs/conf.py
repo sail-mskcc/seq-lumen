@@ -129,7 +129,7 @@ html_theme_options = {
 
 pygments_style = "default"
 katex_prerender = shutil.which(katex.NODEJS_BINARY) is not None
-
+html_logo = "_static/img/lumen.svg"
 nitpick_ignore = [
     # If building the documentation fails because of a missing link that is outside your control,
     # you can add an exception to this list.
