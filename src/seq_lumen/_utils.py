@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import scipy as sp
-from geopandas import GeoDataFrame, points_from_xy
+from geopandas import GeoDataFrame
 from scipy.spatial import KDTree
-from shapely import GeometryType
+from shapely import GeometryType, points
 from shapely.io import from_ragged_array
 from sklearn.neighbors import radius_neighbors_graph
 
@@ -103,13 +103,13 @@ def circles_to_polygons(gdf: GeoDataFrame) -> GeoDataFrame:
     return buffered_df
 
 
-def get_circles(centers_x: np.ndarray, centers_y: np.ndarray, outer_radius: float) -> GeoDataFrame:
+def get_circles(centers: np.ndarray, outer_radius: float) -> GeoDataFrame:
     """Circles of radius `outer_radius` around each center, as polygons.
 
     Parameters
     ----------
-    centers_x, centers_y
-        `(n,)` center coordinates (µm).
+    centers
+        `(n, 2)` center coordinates (µm).
     outer_radius
         Circle radius (µm).
 
@@ -117,21 +117,19 @@ def get_circles(centers_x: np.ndarray, centers_y: np.ndarray, outer_radius: floa
     -------
     `n` polygons, indexed `0..n-1` in the order of the centers.
     """
-    data = np.column_stack((centers_x, centers_y))
-    geometry_type = GeometryType(0)
-    geometries = from_ragged_array(geometry_type=geometry_type, coords=data)
+    geometries = from_ragged_array(geometry_type=GeometryType.POINT, coords=centers)
     dilated_circles_outer = GeoDataFrame({"geometry": geometries, "radius": outer_radius})
     circles = circles_to_polygons(dilated_circles_outer)
     return circles
 
 
-def count_points_within_circles(centers_x: np.ndarray, centers_y: np.ndarray, circles: GeoDataFrame) -> np.ndarray:
+def count_points_within_circles(xy: np.ndarray, circles: GeoDataFrame) -> np.ndarray:
     """Number of points inside (or on the boundary of) each circle.
 
     Parameters
     ----------
-    centers_x, centers_y
-        `(m,)` coordinates of the points to count (despite the name, these are not the circle centers).
+    xy
+        `(m, 2)` coordinates of the points to count.
     circles
         `n` polygons indexed `0..n-1`, as returned by :func:`get_circles`.
 
@@ -139,7 +137,7 @@ def count_points_within_circles(centers_x: np.ndarray, centers_y: np.ndarray, ci
     -------
     `(n,)` integer counts, aligned with `circles`.
     """
-    shapely_points = GeoDataFrame(geometry=points_from_xy(centers_x, centers_y))
+    shapely_points = GeoDataFrame(geometry=points(xy))
     joined = circles.sjoin(shapely_points)
     point_count = joined.index.value_counts()
     result = np.array([0] * circles.shape[0])

@@ -451,8 +451,8 @@ class Quantifier:
 
     def _count(self, xy: np.ndarray, lumen: np.ndarray) -> np.ndarray:
         """Lumen points within :attr:`lumen_radius` of each of the `(n, 2)` `xy`."""
-        circles = get_circles(xy[:, 0], xy[:, 1], self.lumen_radius)
-        return count_points_within_circles(lumen[:, 0], lumen[:, 1], circles)
+        circles = get_circles(xy, self.lumen_radius)
+        return count_points_within_circles(lumen, circles)
 
     @overload
     def find_and_count(
