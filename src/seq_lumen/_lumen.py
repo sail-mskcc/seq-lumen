@@ -575,6 +575,8 @@ class Quantifier:
         This assumes the grid spacing is ~:attr:`interpoint_distance` (`gen_bins` stretches it slightly),
         which holds for real sections.
 
+        This function is not present in :cite:`Reyes2026`.
+
         Parameters
         ----------
         adata
