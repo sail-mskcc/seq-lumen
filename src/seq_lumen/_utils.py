@@ -123,6 +123,34 @@ def get_circles(centers: np.ndarray, outer_radius: float) -> GeoDataFrame:
     return circles
 
 
+def assign_to_nearest_lumen(
+    xy: np.ndarray, lumen: np.ndarray, connect_distance: float, max_distance: float
+) -> np.ndarray:
+    """Which lumen each point borders: the connected component of its nearest lumen point.
+
+    Parameters
+    ----------
+    xy
+        `(n, 2)` points to assign (µm).
+    lumen
+        `(m, 2)` lumen points on the density grid (µm).
+    connect_distance
+        Lumen points closer than this are in the same lumen.
+    max_distance
+        Points with no lumen point within this distance are unassigned.
+
+    Returns
+    -------
+    `(n,)` lumen ids `0..k-1`, `-1` where unassigned.
+    """
+    if len(lumen) == 0:
+        return np.full(len(xy), -1)
+    component = sp.sparse.csgraph.connected_components(radius_neighbors_graph(lumen, radius=connect_distance))[1]
+    dist, idx = KDTree(lumen).query(xy, distance_upper_bound=max_distance)
+    # Unmatched queries get `idx == len(lumen)`, so clip before indexing and mask them out.
+    return np.where(np.isfinite(dist), component[np.minimum(idx, len(lumen) - 1)], -1)
+
+
 def count_points_within_circles(xy: np.ndarray, circles: GeoDataFrame) -> np.ndarray:
     """Number of points inside (or on the boundary of) each circle.
 

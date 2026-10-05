@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Unpack, overload
 import cv2
 import numpy as np
 import pandas as pd
-from anndata.acc import AdRef, MetaAcc
+from anndata.acc import A, AdRef, MetaAcc
 from tqdm import tqdm
 
 from ._utils import (
+    assign_to_nearest_lumen,
     centroids,
     centroids_and_border,
     count_points_within_circles,
@@ -28,6 +29,13 @@ if TYPE_CHECKING:
     from anndata.acc import MultiAcc
 
     from .types import AutoSettings
+
+
+count_acc: AdRef = A.obs["lumen_count"]
+"""Where :meth:`Quantifier.run` writes lumen counts by default."""
+
+assignment_acc: AdRef = A.obs["lumen_id"]
+"""Where :meth:`Quantifier.run` writes lumen ids by default."""
 
 
 @dataclass(frozen=True)
@@ -384,7 +392,7 @@ class Quantifier:
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
         *,
         centroids_acc: MultiAcc,
-        lumen_count_acc: AdRef,
+        count_acc: AdRef,
         sample_acc: None = None,
     ) -> None: ...
     @overload
@@ -394,7 +402,7 @@ class Quantifier:
         lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
         centroids_acc: MultiAcc,
-        lumen_count_acc: AdRef,
+        count_acc: AdRef,
         sample_acc: AdRef,
     ) -> None: ...
     def count(
@@ -404,7 +412,7 @@ class Quantifier:
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
         centroids_acc: MultiAcc,
-        lumen_count_acc: AdRef,
+        count_acc: AdRef,
         sample_acc: AdRef | None = None,
     ) -> None:
         """Count lumen points within :attr:`lumen_radius` of each cell, i.e. the paper's "lumen area".
@@ -421,19 +429,17 @@ class Quantifier:
             With `sample_acc`, a dict from each sample to its lumen points.
         centroids_acc
             Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
-        lumen_count_acc
+        count_acc
             `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
         sample_acc
             Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
             Each cell only counts its own section's lumen. If `None`, `adata` is a single section.
         """
-        match lumen_count_acc:
+        match count_acc:
             case AdRef(acc=MetaAcc(dim="obs"), idx=str(col)):
                 pass
             case _:
-                raise TypeError(
-                    f"`lumen_count_acc` must be an `obs` column accessor like `A.obs['col']`, not {lumen_count_acc!r}"
-                )
+                raise TypeError(f"`count_acc` must be an `obs` column accessor like `A.obs['col']`, not {count_acc!r}")
         xy = adata[centroids_acc]
         if sample_acc is None:
             if isinstance(lumen, dict):
@@ -455,45 +461,56 @@ class Quantifier:
         return count_points_within_circles(lumen, circles)
 
     @overload
-    def find_and_count(
+    def run(
         self,
         adata: AnnData,
         *,
         centroids_acc: MultiAcc,
         border_acc: AdRef,
-        lumen_count_acc: AdRef,
+        count_acc: AdRef = count_acc,
+        assignment_acc: AdRef = assignment_acc,
         sample_acc: None = None,
     ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
     @overload
-    def find_and_count(
-        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, lumen_count_acc: AdRef, sample_acc: AdRef
-    ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
-    def find_and_count(
+    def run(
         self,
         adata: AnnData,
         *,
         centroids_acc: MultiAcc,
         border_acc: AdRef,
-        lumen_count_acc: AdRef,
+        count_acc: AdRef = count_acc,
+        assignment_acc: AdRef = assignment_acc,
+        sample_acc: AdRef,
+    ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
+    def run(
+        self,
+        adata: AnnData,
+        *,
+        centroids_acc: MultiAcc,
+        border_acc: AdRef,
+        count_acc: AdRef = count_acc,
+        assignment_acc: AdRef = assignment_acc,
         sample_acc: AdRef | None = None,
     ) -> (
         np.ndarray[tuple[int, int], np.dtype[np.floating]]
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]
     ):
-        """A small wrapper for :meth:`find` followed by :meth:`count`.
+        """A small wrapper for :meth:`find` followed by :meth:`count` and :meth:`assign`.
 
         See their docstrings for more information.
 
         Parameters
         ----------
         adata
-            The tissue section `lumen` was computed from.
+            One tissue section, or several if `sample_acc` is given.
         centroids_acc
-            Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm).
         border_acc
             Accessor for a boolean `n_obs` mask of the cells lining lumens (epithelial cells).
-        lumen_count_acc
-            `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
+        count_acc
+            `obs` column accessor to write the `(n_obs,)` counts to (default :data:`count_acc`).
+        assignment_acc
+            `obs` column accessor to write the `(n_obs,)` lumen ids to (default :data:`assignment_acc`).
         sample_acc
             Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
             If `None`, `adata` is a single section.
@@ -504,12 +521,100 @@ class Quantifier:
         With `sample_acc`, a dict from each sample to its lumen points.
         """
         lumen = self.find(adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc)
-        # mypy can't tell that `lumen` is a dict exactly when `sample_acc` is given; `count` checks at runtime.
+        # mypy can't tell that `lumen` is a dict exactly when `sample_acc` is given; `count`/`assign` check at runtime.
         self.count(
             adata,
             lumen,  # type: ignore[arg-type]
             centroids_acc=centroids_acc,
-            lumen_count_acc=lumen_count_acc,
+            count_acc=count_acc,
+            sample_acc=sample_acc,  # type: ignore[arg-type]
+        )
+        self.assign(
+            adata,
+            lumen,  # type: ignore[arg-type]
+            centroids_acc=centroids_acc,
+            assignment_acc=assignment_acc,
             sample_acc=sample_acc,  # type: ignore[arg-type]
         )
         return lumen
+
+    @overload
+    def assign(
+        self,
+        adata: AnnData,
+        lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
+        *,
+        centroids_acc: MultiAcc,
+        assignment_acc: AdRef,
+        sample_acc: None = None,
+    ) -> None: ...
+    @overload
+    def assign(
+        self,
+        adata: AnnData,
+        lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
+        *,
+        centroids_acc: MultiAcc,
+        assignment_acc: AdRef,
+        sample_acc: AdRef,
+    ) -> None: ...
+    def assign(
+        self,
+        adata: AnnData,
+        lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]]
+        | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
+        *,
+        centroids_acc: MultiAcc,
+        assignment_acc: AdRef,
+        sample_acc: AdRef | None = None,
+    ) -> None:
+        """Assign each cell to the lumen nearest it, within :attr:`lumen_radius`.
+
+        A lumen is a connected component of lumen points (8-connected on the density grid).
+        Points within 1.5 grid steps are linked: diagonal neighbours (√2 steps) join, points 2 steps apart don't.
+        This assumes the grid spacing is ~:attr:`interpoint_distance` (`gen_bins` stretches it slightly),
+        which holds for real sections.
+
+        Parameters
+        ----------
+        adata
+            The tissue section(s) `lumen` was computed from.
+        lumen
+            `(n, 2)` lumen points, as returned by :meth:`find`.
+            With `sample_acc`, a dict from each sample to its lumen points.
+        centroids_acc
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm).
+        assignment_acc
+            `obs` column accessor, e.g. `A.obs["lumen_id"]`, to write the `(n_obs,)` lumen ids to.
+            Ids are `0..k-1` per section (pair them with the sample column), `-1` for cells with no lumen nearby.
+        sample_acc
+            Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
+            Each cell is only assigned to its own section's lumens. If `None`, `adata` is a single section.
+        """
+        match assignment_acc:
+            case AdRef(acc=MetaAcc(dim="obs"), idx=str(col)):
+                pass
+            case _:
+                raise TypeError(
+                    f"`assignment_acc` must be an `obs` column accessor like `A.obs['col']`, not {assignment_acc!r}"
+                )
+        xy = adata[centroids_acc]
+        if sample_acc is None:
+            if isinstance(lumen, dict):
+                raise TypeError("`lumen` is per-sample, so pass the `sample_acc` it was found with")
+            adata.obs[col] = self._assign(xy, lumen)
+            return
+        if not isinstance(lumen, dict):
+            raise TypeError("with `sample_acc`, `lumen` must map each sample to its lumen, as from `find`")
+        labels = samples(adata, sample_acc)
+        lumen_id = np.full(adata.n_obs, -1)
+        for s in labels.categories:
+            mask = labels == s
+            lumen_id[mask] = self._assign(xy[mask], lumen[s])
+        adata.obs[col] = lumen_id
+
+    def _assign(self, xy: np.ndarray, lumen: np.ndarray) -> np.ndarray:
+        """Lumen id of each of the `(n, 2)` `xy`, `-1` if none within :attr:`lumen_radius`."""
+        # ponytail: 1.5 grid steps links diagonal neighbours (√2 steps) but not points 2 steps apart; assumes the
+        # grid spacing is ~`interpoint_distance` (`gen_bins` stretches it slightly), which holds for real sections.
+        return assign_to_nearest_lumen(xy, lumen, 1.5 * self.interpoint_distance, self.lumen_radius)

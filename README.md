@@ -20,18 +20,18 @@ from anndata.acc import A
 # Set up relevant accessors for each relevant field.
 centroids_acc = A.obsm["X_spatial"]
 border_acc = A.obs["is_epithelial"]
-lumen_count_acc = A.obs["lumen_score_auto"]
 # Only if needed
 sample_acc = A.obs["sample_id"]
 # Resolve the parameters for quantification for all applicable samples, if present.
 sl_quantifier = seq_lumen.Quantifier.from_adata(adata, centroids_acc=centroids_acc, sample_acc=sample_acc)
 # Each value of `lumen` is a `(n_lumen_points, 2)` array of luminal centroids and the key is the sample id.
 # If no `sample_acc` is passed in, just an ndarray is returned.
-lumen: dict[str, np.ndarray] = sl_quantifier.find_and_count(
-    adata, centroids_acc=centroids_acc, border_acc=border_acc, lumen_count_acc=lumen_count_acc, sample_acc=sample_acc
+lumen: dict[str, np.ndarray] = sl_quantifier.run(
+    adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc
 )
-# The scores are available here per-cell
-assert lumen_count_acc in adata
+# Per-cell lumen scores and lumen ids are written to these default accessors (pass `count_acc`/`assignment_acc` to override)
+assert seq_lumen.count_acc in adata
+assert seq_lumen.assignment_acc in adata
 ```
 
 ## Divergences from the Original
