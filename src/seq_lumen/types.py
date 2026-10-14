@@ -24,6 +24,8 @@ class AutoSettings(TypedDict, total=False):
     anchor_max_distance: float
     #: See :attr:`~seq_lumen.Quantifier.lumen_radius`.
     lumen_radius: float
+    #: See :attr:`~seq_lumen.Quantifier.exclude_outside`.
+    exclude_outside: bool
 
 
 __all__ = ["AutoSettings"]

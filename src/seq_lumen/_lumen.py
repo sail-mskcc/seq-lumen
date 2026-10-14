@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Unpack, overload
 import cv2
 import numpy as np
 import pandas as pd
+import scipy as sp
 from anndata.acc import A, AdRef, MetaAcc
 from tqdm import tqdm
 
@@ -49,7 +50,8 @@ class Quantifier:
     1. **Empty space.** All centroids are binned onto the *density grid*, a mesh with spacing
        :attr:`interpoint_distance` (5 µm/px by default). The per-pixel cell counts are smoothed with a
        :attr:`blurring_bandwidth`-px box filter, and pixels whose smoothed count is below :attr:`min_density`
-       become *empty points*. Each empty point stands for `interpoint_distance**2` µm² of area.
+       become *empty points*. With :attr:`exclude_outside`, those connected to the grid's edge are dropped.
+       Each empty point stands for `interpoint_distance**2` µm² of area.
     2. **Enclosed lumen.** The border (epithelial) centroids are drawn onto the *border raster* at 1 µm/px.
        The raster is dilated :attr:`n_iterations` times with a 10 px (10 µm) elliptical kernel to close gaps
        between neighbouring cells, holes fully enclosed by the dilated border cells are filled, and the result is
@@ -143,6 +145,14 @@ class Quantifier:
     Used in :meth:`count`.
     """
 
+    exclude_outside: bool = False
+    """Drop empty points connected to the density grid's edge, i.e. the background outside the tissue.
+
+    Without this, step 3 grows lumen from epithelium on the tissue edge out into the background.
+    Lumen opening onto the section edge is dropped too. Not in the paper or the notebook; on in :meth:`from_adata`.
+    Used in step 1.
+    """
+
     @classmethod
     def from_adata(
         cls,
@@ -165,6 +175,7 @@ class Quantifier:
         - :attr:`interpoint_distance` = `2 * Q(gap) / blurring_bandwidth`
         - :attr:`rescue_max_distance` = `2 * interpoint_distance`: about one grid row beyond the closest an empty
           point can get to a cell.
+        - :attr:`exclude_outside` = `True`.
 
         Each section is estimated on its own (coordinates of different sections overlap) and the median is used,
         so that every section is measured with the same parameters and lumen area stays comparable across them.
@@ -208,6 +219,7 @@ class Quantifier:
         derived: AutoSettings = {
             "interpoint_distance": interpoint_distance,
             "rescue_max_distance": 2 * interpoint_distance,
+            "exclude_outside": True,
         }
         return cls(**(derived | kwargs))
 
@@ -237,7 +249,12 @@ class Quantifier:
 
         # Blur cellular density estimate and find x,y coordinates that have very few cells (empty regions)
         # Divergence from paper: a box filter (`cv2.blur`), not a Gaussian.
-        empty_bins = np.ravel(cv2.blur(h[0].T, (self.blurring_bandwidth, self.blurring_bandwidth)) < self.min_density)
+        empty = cv2.blur(h[0].T, (self.blurring_bandwidth, self.blurring_bandwidth)) < self.min_density
+        if self.exclude_outside:
+            components, _ = sp.ndimage.label(empty)
+            outside = np.unique(np.concatenate([components[[0, -1]].ravel(), components[:, [0, -1]].ravel()]))
+            empty &= ~np.isin(components, outside[outside > 0])
+        empty_bins = np.ravel(empty)
         xval_linear, yval_linear = (np.ravel(base)[empty_bins] for base in (xx_base, yy_base))
 
         # These are the empty points

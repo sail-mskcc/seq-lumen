@@ -104,3 +104,15 @@ def test_assign():
     xy = adata.obsm["spatial"]
     far = np.minimum(*(np.linalg.norm(xy - c, axis=1) for c in ([200, 200], [600, 200]))) > 60 + quantifier.lumen_radius
     assert np.all(ids[far] == -1)
+
+
+def test_no_lumen_outside_tissue():
+    """Epithelium on the edge of an L-shaped section: the empty corner of its bounding box is only lumen by default."""
+    g = np.stack(np.meshgrid(np.arange(0, 400, 10.0), np.arange(0, 400, 10.0)), -1).reshape(-1, 2)
+    stroma = g[(g[:, 0] < 200) | (g[:, 1] < 200)]
+    edge = np.r_[[[200.0, y] for y in range(200, 400, 10)], [[x, 200.0] for x in range(200, 400, 10)]]
+    adata = ad.AnnData(obs={"epi": np.r_[np.zeros(len(stroma), bool), np.ones(len(edge), bool)]})
+    adata.obsm["spatial"] = np.r_[stroma, edge]
+    find = {"centroids_acc": A.obsm["spatial"], "border_acc": A.obs["epi"]}
+    assert len(Quantifier().find(adata, **find)) > 0
+    assert len(Quantifier(exclude_outside=True).find(adata, **find)) == 0
