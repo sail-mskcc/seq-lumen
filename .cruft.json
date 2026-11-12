@@ -1,0 +1,44 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "168790f261be4dfdaed7d36a381887552ce36bfc",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "seq_lumen",
+      "package_name": "seq_lumen",
+      "project_description": "A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.",
+      "author_full_name": "Ilan Gold",
+      "author_email": "ilan.gold@scverse.org",
+      "github_user": "ilan-gold",
+      "github_repo": "seq_lumen",
+      "license": "MIT License",
+      "ide_integration": true,
+      "issue_categorization": "issue types",
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_exclude_on_template_update": [
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "docs/api.md",
+        "docs/index.md",
+        "docs/notebooks/example.ipynb",
+        "docs/references.bib",
+        "docs/references.md",
+        "src/**",
+        "tests/**"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse",
+      "_commit": "168790f261be4dfdaed7d36a381887552ce36bfc"
+    }
+  },
+  "directory": null
+}
