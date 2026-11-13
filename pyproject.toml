@@ -76,6 +76,11 @@ typecheck = [
   "types-tqdm",
 ]
 
+[tool.hatch]
+version.source = "vcs"
+version.raw-options.version_scheme = "release-branch-semver"
+build.targets.wheel.packages = [ "src/seq_lumen" ]
+
 [tool.ruff]
 line-length = 120
 src = [ "src" ]
