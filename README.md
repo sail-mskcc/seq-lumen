@@ -18,18 +18,21 @@ import seq_lumen
 from anndata.acc import A
 
 # Set up relevant accessors for each relevant field.
-centroids_acc = A.obsm["X_spatial"]
 border_acc = A.obs["is_epithelial"]
-# Only if needed
+# Only if needed with multiple samples
 sample_acc = A.obs["sample_id"]
+# Only if needed - the default check for centroids looks in obsm["spatial"]
+# centroids_acc = A.obsm["X_spatial"]
+assert seq_lumen.acc.centroids_acc in adata
+
 # Resolve the parameters for quantification for all applicable samples, if present.
 # This is much more robust than the defaults, which match Reyes et al.
-sl_quantifier = seq_lumen.Quantifier.from_adata(adata, centroids_acc=centroids_acc, sample_acc=sample_acc)
+sl_quantifier = seq_lumen.Quantifier.from_adata(adata, sample_acc=sample_acc)
+
 # Each value of `lumen` is a `(n_lumen_points, 2)` array of luminal centroids and the key is the sample id.
 # If no `sample_acc` is passed in, just a single ndarray is returned, calculated over all centroids/borders together.
-lumen: dict[str, np.ndarray] = sl_quantifier(
-    adata, centroids_acc=centroids_acc, border_acc=border_acc, sample_acc=sample_acc
-)
+lumen: dict[str, np.ndarray] = sl_quantifier(adata, border_acc=border_acc, sample_acc=sample_acc)
+
 # Per-cell lumen scores and lumen ids are written to these default accessors (pass `count_acc`/`assignment_acc` to override in the above quantifier call)
 assert seq_lumen.acc.count_acc in adata
 assert seq_lumen.acc.assignment_acc in adata
