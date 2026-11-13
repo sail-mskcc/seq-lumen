@@ -3,7 +3,7 @@
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
 
-[badge-tests]: https://img.shields.io/github/actions/workflow/status/ilan-gold/seq-lumen/test.yaml?branch=main
+[badge-tests]: https://img.shields.io/github/actions/workflow/status/sail-mskcc/seq-lumen/test.yaml?branch=main
 [badge-docs]: https://app.readthedocs.org/projects/seq-lumen/badge/
 
 A small package for lumen/luminal-structure quantification only from centroids. Based on {cite}`Reyes2026`'s method for quantification, with some small (presumed) fixes.
@@ -71,7 +71,7 @@ Choose from the options below to install seq-lumen:
 1. Install the latest development version:
 
    ```bash
-   pip install git+https://github.com/ilan-gold/seq-lumen.git  # (or `uv add`)
+   pip install seq-lumen  # (or `uv add`)
    ```
 
 ## Release notes
@@ -89,8 +89,8 @@ Reyes, J., Del Priore, I., Chaikovsky, A. C., Pasnuri, N., Elhossiny, A. M., Par
 
 [uv]: https://github.com/astral-sh/uv
 [scverse discourse]: https://discourse.scverse.org/
-[issue tracker]: https://github.com/ilan-gold/seq-lumen/issues
-[tests]: https://github.com/ilan-gold/seq-lumen/actions/workflows/test.yaml
+[issue tracker]: https://github.com/sail-mskcc/seq-lumen/issues
+[tests]: https://github.com/sail-mskcc/seq-lumen/actions/workflows/test.yaml
 [documentation]: https://seq-lumen.readthedocs.io
 [changelog]: https://seq-lumen.readthedocs.io/page/changelog.html
 [api documentation]: https://seq-lumen.readthedocs.io/page/api.html

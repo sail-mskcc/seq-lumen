@@ -1,10 +1,9 @@
 [build-system]
 build-backend = "hatchling.build"
-requires = [ "hatchling" ]
+requires = [ "hatch-vcs", "hatchling" ]
 
 [project]
 name = "seq-lumen"
-version = "0.0.1"
 description = """\
   A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.\
   """
@@ -24,6 +23,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
+dynamic = [ "version" ]
 dependencies = [
   "anndata>=0.13",
   "geopandas",
@@ -38,8 +38,8 @@ dependencies = [
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://seq-lumen.readthedocs.io/"
-urls.Homepage = "https://github.com/ilan-gold/seq-lumen"
-urls.Source = "https://github.com/ilan-gold/seq-lumen"
+urls.Homepage = "https://github.com/sail-mskcc/seq-lumen"
+urls.Source = "https://github.com/sail-mskcc/seq-lumen"
 
 [dependency-groups]
 dev = [

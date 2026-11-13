@@ -24,7 +24,7 @@ from ._utils import (
     propagate_points,
     samples,
 )
-from .acc import assignment_acc, count_acc
+from .acc import assignment_acc, centroids_acc, count_acc
 
 if TYPE_CHECKING:
     from anndata import AnnData
@@ -172,7 +172,7 @@ class Quantifier:
         cls,
         adata: AnnData,
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         sample_acc: AdRef | None = None,
         quantile: float = 0.95,
         rtol: float = 0.2,
@@ -203,7 +203,7 @@ class Quantifier:
         adata
             One or more tissue sections.
         centroids_acc
-            Accessor for an `(n_obs, 2)` array of cell centroids (µm).
+            Accessor for an `(n_obs, 2)` array of cell centroids (µm) (default :data:`~seq_lumen.acc.centroids_acc`).
         sample_acc
             Categorical `obs` column accessor, e.g. `A.obs["sample_id"]`, labelling each cell's section.
             If `None`, `adata` is a single section.
@@ -351,14 +351,19 @@ class Quantifier:
 
     @overload
     def find(
-        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: None = None
+        self, adata: AnnData, *, centroids_acc: MultiAcc = centroids_acc, border_acc: AdRef, sample_acc: None = None
     ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]: ...
     @overload
     def find(
-        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef
+        self, adata: AnnData, *, centroids_acc: MultiAcc = centroids_acc, border_acc: AdRef, sample_acc: AdRef
     ) -> dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]: ...
     def find(
-        self, adata: AnnData, *, centroids_acc: MultiAcc, border_acc: AdRef, sample_acc: AdRef | None = None
+        self,
+        adata: AnnData,
+        *,
+        centroids_acc: MultiAcc = centroids_acc,
+        border_acc: AdRef,
+        sample_acc: AdRef | None = None,
     ) -> (
         np.ndarray[tuple[int, int], np.dtype[np.floating]]
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]]
@@ -370,7 +375,7 @@ class Quantifier:
         adata
             One tissue section, or several if `sample_acc` is given.
         centroids_acc
-            Accessor for an `(n_obs, 2)` array of cell centroids (µm for the default parameters, non-negative).
+            Accessor for an `(n_obs, 2)` array of cell centroids (µm for the default parameters, non-negative) (default :data:`~seq_lumen.acc.centroids_acc`).
         border_acc
             Accessor for a boolean `n_obs` mask of the cells lining lumens (epithelial cells).
         sample_acc
@@ -423,7 +428,7 @@ class Quantifier:
         adata: AnnData,
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         count_acc: AdRef,
         sample_acc: None = None,
     ) -> None: ...
@@ -433,7 +438,7 @@ class Quantifier:
         adata: AnnData,
         lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         count_acc: AdRef,
         sample_acc: AdRef,
     ) -> None: ...
@@ -443,7 +448,7 @@ class Quantifier:
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]]
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         count_acc: AdRef = count_acc,
         sample_acc: AdRef | None = None,
     ) -> None:
@@ -460,7 +465,7 @@ class Quantifier:
             `(n, 2)` lumen points, as returned by :meth:`find`.
             With `sample_acc`, a dict from each sample to its lumen points.
         centroids_acc
-            Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on.
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm) to center the circles on (default :data:`~seq_lumen.acc.centroids_acc`).
         count_acc
             `obs` column accessor, e.g. `A.obs["lumen_count"]`, to write the `(n_obs,)` counts to.
         sample_acc
@@ -498,7 +503,7 @@ class Quantifier:
         adata: AnnData,
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         assignment_acc: AdRef,
         sample_acc: None = None,
     ) -> None: ...
@@ -508,7 +513,7 @@ class Quantifier:
         adata: AnnData,
         lumen: dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         assignment_acc: AdRef,
         sample_acc: AdRef,
     ) -> None: ...
@@ -518,7 +523,7 @@ class Quantifier:
         lumen: np.ndarray[tuple[int, int], np.dtype[np.floating]]
         | dict[str, np.ndarray[tuple[int, int], np.dtype[np.floating]]],
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         assignment_acc: AdRef = assignment_acc,
         sample_acc: AdRef | None = None,
     ) -> None:
@@ -539,7 +544,7 @@ class Quantifier:
             `(n, 2)` lumen points, as returned by :meth:`find`.
             With `sample_acc`, a dict from each sample to its lumen points.
         centroids_acc
-            Accessor for the `(n_obs, 2)` array of cell centroids (µm).
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm) (default :data:`~seq_lumen.acc.centroids_acc`).
         assignment_acc
             `obs` column accessor, e.g. `A.obs["lumen_id"]`, to write the `(n_obs,)` lumen ids to.
             Ids are `0..k-1` per section (pair them with the sample column), `-1` for cells with no lumen nearby.
@@ -580,7 +585,7 @@ class Quantifier:
         self,
         adata: AnnData,
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         border_acc: AdRef,
         count_acc: AdRef = count_acc,
         assignment_acc: AdRef = assignment_acc,
@@ -591,7 +596,7 @@ class Quantifier:
         self,
         adata: AnnData,
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         border_acc: AdRef,
         count_acc: AdRef = count_acc,
         assignment_acc: AdRef = assignment_acc,
@@ -601,7 +606,7 @@ class Quantifier:
         self,
         adata: AnnData,
         *,
-        centroids_acc: MultiAcc,
+        centroids_acc: MultiAcc = centroids_acc,
         border_acc: AdRef,
         count_acc: AdRef = count_acc,
         assignment_acc: AdRef = assignment_acc,
@@ -619,7 +624,7 @@ class Quantifier:
         adata
             One tissue section, or several if `sample_acc` is given.
         centroids_acc
-            Accessor for the `(n_obs, 2)` array of cell centroids (µm).
+            Accessor for the `(n_obs, 2)` array of cell centroids (µm) (default :data:`~seq_lumen.acc.centroids_acc`).
         border_acc
             Accessor for a boolean `n_obs` mask of the cells lining lumens (epithelial cells).
         count_acc

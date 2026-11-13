@@ -9,7 +9,7 @@
       "project_description": "A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.",
       "author_full_name": "Ilan Gold",
       "author_email": "ilan.gold@scverse.org",
-      "github_user": "ilan-gold",
+      "github_user": "sail-mskcc",
       "github_repo": "seq-lumen",
       "license": "MIT License",
       "ide_integration": true,

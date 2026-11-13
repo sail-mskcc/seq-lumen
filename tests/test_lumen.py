@@ -136,3 +136,17 @@ def test_direct_construction_warns():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         Quantifier.from_adata(gen_lumen(closed=True), centroids_acc=A.obsm["spatial"])
+
+
+def test_default_centroids_acc():
+    """Omitting `centroids_acc` reads `A.obsm["spatial"]`."""
+    explicit, default = gen_lumen(closed=True), gen_lumen(closed=True)
+    quantifier = Quantifier.from_adata(default)
+    assert quantifier == Quantifier.from_adata(explicit, centroids_acc=A.obsm["spatial"])
+
+    np.testing.assert_array_equal(
+        quantifier(default, border_acc=A.obs["epi"]),
+        quantifier(explicit, centroids_acc=A.obsm["spatial"], border_acc=A.obs["epi"]),
+    )
+    for acc in (count_acc, assignment_acc):
+        np.testing.assert_array_equal(default[acc], explicit[acc])

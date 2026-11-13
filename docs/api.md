@@ -22,6 +22,7 @@ Where {meth}`~seq_lumen.Quantifier.__call__` writes its results unless told othe
 .. autosummary::
     :toctree: generated
 
+    centroids_acc
     count_acc
     assignment_acc
 ```
