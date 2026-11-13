@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a new feature for seq_lumen
+description: Propose a new feature for seq-lumen
 type: Enhancement
 body:
   - type: textarea

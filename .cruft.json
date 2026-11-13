@@ -4,13 +4,13 @@
   "checkout": null,
   "context": {
     "cookiecutter": {
-      "project_name": "seq_lumen",
+      "project_name": "seq-lumen",
       "package_name": "seq_lumen",
       "project_description": "A small package for lumen/luminal-structure detection only from centroids. Based on Reyes et al. 2026's method.",
       "author_full_name": "Ilan Gold",
       "author_email": "ilan.gold@scverse.org",
       "github_user": "ilan-gold",
-      "github_repo": "seq_lumen",
+      "github_repo": "seq-lumen",
       "license": "MIT License",
       "ide_integration": true,
       "issue_categorization": "issue types",

@@ -37,9 +37,9 @@ dependencies = [
   "tqdm",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
-urls.Documentation = "https://seq_lumen.readthedocs.io/"
-urls.Homepage = "https://github.com/ilan-gold/seq_lumen"
-urls.Source = "https://github.com/ilan-gold/seq_lumen"
+urls.Documentation = "https://seq-lumen.readthedocs.io/"
+urls.Homepage = "https://github.com/ilan-gold/seq-lumen"
+urls.Source = "https://github.com/ilan-gold/seq-lumen"
 
 [dependency-groups]
 dev = [
